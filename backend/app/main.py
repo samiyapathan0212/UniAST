@@ -28,7 +28,7 @@ from .schemas import (
 )
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(database_url: str | None = None) -> CORSMiddleware:
     engine = create_database_engine(database_url)
 
     application = FastAPI(
@@ -38,13 +38,6 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     application.state.engine = engine
     application.add_middleware(MaxRequestBodySizeMiddleware)
-    application.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-        allow_credentials=False,
-        allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type"],
-    )
 
     @application.post(
         "/api/v1/sessions",
@@ -306,7 +299,23 @@ def create_app(database_url: str | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Kinetic analysis record not found.")
         return record
 
-    return application
+    # Wrap the complete FastAPI app so CORS headers are also applied to
+    # framework-generated error responses (including unhandled 500s).
+    cors_application = CORSMiddleware(
+        app=application,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://uni-ast-five.vercel.app",
+        ],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Accept", "Authorization", "Content-Type"],
+    )
+    # Preserve the existing create_app(...).state.engine access used by tests
+    # and local lifecycle code while exposing the outer CORS ASGI application.
+    cors_application.state = application.state
+    return cors_application
 
 
 app = create_app()

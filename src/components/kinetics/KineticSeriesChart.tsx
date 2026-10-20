@@ -7,6 +7,7 @@ import {
     CartesianGrid,
     Line,
     LineChart,
+    ReferenceLine,
     ResponsiveContainer,
     Tooltip,
     XAxis,
@@ -14,6 +15,7 @@ import {
 } from 'recharts';
 import { useReducedMotion } from 'motion/react';
 import type { DerivedObservation } from '../../utils/kinetics';
+import { prepareKineticChart } from '../../utils/kineticChart';
 
 const COLORS = {
     meanLuminance: '#00f2fe',
@@ -77,13 +79,7 @@ export function KineticSeriesChart({
         meanB: false,
     });
 
-    const data = observations.map((obs) => ({
-        time: obs.timeMin,
-        meanLuminance: Number(obs.meanLuminance.toFixed(2)),
-        meanR: Number(obs.meanR.toFixed(2)),
-        meanG: Number(obs.meanG.toFixed(2)),
-        meanB: Number(obs.meanB.toFixed(2)),
-    }));
+    const { data, baselineLuminance, connectObservations } = prepareKineticChart(observations);
 
     return (
         <div className="flex flex-col gap-3">
@@ -133,6 +129,21 @@ export function KineticSeriesChart({
                             width={46}
                             domain={[0, 255]}
                         />
+                        {enabled.meanLuminance && baselineLuminance !== null ? (
+                            <ReferenceLine
+                                y={baselineLuminance}
+                                stroke="#fbbf24"
+                                strokeWidth={2}
+                                strokeDasharray="7 4"
+                                ifOverflow="extendDomain"
+                                label={{
+                                    value: `Mean luminance baseline (${baselineLuminance.toFixed(2)})`,
+                                    position: 'insideTopRight',
+                                    fill: '#fbbf24',
+                                    fontSize: 11,
+                                }}
+                            />
+                        ) : null}
                         <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'rgba(0,242,254,0.35)', strokeWidth: 1 }} />
                         {(Object.keys(COLORS) as SeriesKey[]).map((key) =>
                             enabled[key] ? (
@@ -141,10 +152,10 @@ export function KineticSeriesChart({
                                     type="monotone"
                                     dataKey={key}
                                     name={SERIES.find((s) => s.key === key)?.label ?? key}
-                                    stroke={COLORS[key]}
+                                    stroke={connectObservations ? COLORS[key] : 'transparent'}
                                     strokeWidth={key === 'meanLuminance' ? 2.5 : 1.75}
-                                    dot={{ r: 3, strokeWidth: 0 }}
-                                    activeDot={{ r: 5, strokeWidth: 0 }}
+                                    dot={{ r: 3, fill: COLORS[key], strokeWidth: 0 }}
+                                    activeDot={{ r: 5, fill: COLORS[key], strokeWidth: 0 }}
                                     isAnimationActive={!reduceMotion}
                                     animationDuration={700}
                                     connectNulls={false}

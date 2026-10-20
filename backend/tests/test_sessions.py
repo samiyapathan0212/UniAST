@@ -113,3 +113,58 @@ async def test_record_persists_across_database_sessions(client):
     assert retrieved.status_code == 200
     assert retrieved.json()["name"] == "Persistent record"
     assert retrieved.json()["notes"] == "Temporary database test"
+
+
+@pytest.mark.anyio
+async def test_patch_session_updates_only_supplied_fields(client):
+    created = (await make_session(
+        client, "Before edit", device="Pixel 8", notes="Keep these notes"
+    )).json()
+
+    response = await client.patch(
+        f"/api/v1/sessions/{created['id']}",
+        json={"name": "  Updated run  ", "device": None},
+    )
+
+    assert response.status_code == 200
+    updated = response.json()
+    assert updated["id"] == created["id"]
+    assert updated["createdAt"] == created["createdAt"]
+    assert updated["updatedAt"] >= created["updatedAt"]
+    assert updated["name"] == "Updated run"
+    assert updated["device"] is None
+    assert updated["notes"] == "Keep these notes"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"name": " "}, {"name": None}, {"name": "x" * 121}, {"notes": "x" * 2001}],
+)
+@pytest.mark.anyio
+async def test_patch_rejects_empty_or_invalid_updates(client, payload):
+    created = (await make_session(client, "Patch target")).json()
+    response = await client.patch(f"/api/v1/sessions/{created['id']}", json=payload)
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
+async def test_patch_and_delete_unknown_session_return_404(client):
+    missing_id = "00000000-0000-0000-0000-000000000001"
+    assert (await client.patch(
+        f"/api/v1/sessions/{missing_id}", json={"name": "No such session"}
+    )).status_code == 404
+    assert (await client.delete(f"/api/v1/sessions/{missing_id}")).status_code == 404
+
+
+@pytest.mark.anyio
+async def test_delete_session_returns_no_content_and_removes_it_from_list(client):
+    first = (await make_session(client, "Delete target")).json()
+    second = (await make_session(client, "Keep target")).json()
+
+    deleted = await client.delete(f"/api/v1/sessions/{first['id']}")
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+    assert (await client.get(f"/api/v1/sessions/{first['id']}")).status_code == 404
+    listing = await client.get("/api/v1/sessions")
+    assert listing.status_code == 200
+    assert [item["id"] for item in listing.json()["items"]] == [second["id"]]

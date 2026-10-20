@@ -44,6 +44,38 @@ class SessionCreate(ApiModel):
         return value
 
 
+class SessionUpdate(ApiModel):
+    """Partial metadata update; null device/notes values clear those fields."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    device: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_and_validate_update_name(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("Name cannot be null.")
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Name must contain at least one non-whitespace character.")
+        return value
+
+    @field_validator("device", "notes", mode="before")
+    @classmethod
+    def trim_update_optional_text(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self):
+        if not self.model_fields_set:
+            raise ValueError("Provide at least one session field to update.")
+        return self
+
+
 class SessionRead(ApiModel):
     id: UUID
     name: str

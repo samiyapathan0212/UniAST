@@ -19,7 +19,12 @@ async def test_production_frontend_origin_is_allowed(client):
 
 @pytest.mark.parametrize(
     "origin",
-    ["http://localhost:5173", "http://127.0.0.1:5173"],
+    [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ],
 )
 @pytest.mark.anyio
 async def test_local_development_origins_remain_allowed(client, origin):
@@ -29,19 +34,29 @@ async def test_local_development_origins_remain_allowed(client, origin):
     assert response.headers["access-control-allow-origin"] == origin
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        PRODUCTION_ORIGIN,
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ],
+)
 @pytest.mark.anyio
-async def test_preflight_allows_production_origin_and_required_methods_and_headers(client):
+async def test_preflight_allows_explicit_origins_and_required_methods_and_headers(client, origin):
     response = await client.options(
         "/api/v1/sessions?limit=50&offset=0",
         headers={
-            "Origin": PRODUCTION_ORIGIN,
+            "Origin": origin,
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "authorization,content-type",
         },
     )
 
     assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == PRODUCTION_ORIGIN
+    assert response.headers["access-control-allow-origin"] == origin
     allowed_methods = response.headers["access-control-allow-methods"]
     for method in ("GET", "POST", "PATCH", "DELETE", "OPTIONS"):
         assert method in allowed_methods

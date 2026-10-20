@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button } from './Button';
 import { GlassCard } from './GlassCard';
 import {
+    deleteAnalysisRecord,
     getResearchSession,
     listAnalysisRecords,
     listResearchSessions,
@@ -40,6 +41,7 @@ export function AnalysisPersistencePanel({
     const [loadingRecords, setLoadingRecords] = useState(false);
     const [saving, setSaving] = useState(false);
     const [loadingRecordId, setLoadingRecordId] = useState<string | null>(null);
+    const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
 
@@ -49,9 +51,11 @@ export function AnalysisPersistencePanel({
             const result = await listAnalysisRecords(sessionId, kind);
             setRecords(result.items);
             setError(null);
+            return true;
         } catch (cause) {
             setRecords([]);
             setError(cause instanceof Error ? cause.message : 'Could not load saved analyses.');
+            return false;
         } finally {
             setLoadingRecords(false);
         }
@@ -85,7 +89,7 @@ export function AnalysisPersistencePanel({
     }, [refreshRecords, selectedSessionId]);
 
     const handleSave = async () => {
-        if (!selectedSessionId || !canSave || saving) return;
+        if (!selectedSessionId || !canSave || saving || deletingRecordId !== null) return;
         setSaving(true);
         setError(null);
         setSuccess(null);
@@ -102,7 +106,7 @@ export function AnalysisPersistencePanel({
     };
 
     const handleLoad = async (recordId: string) => {
-        if (!selectedSessionId) return;
+        if (!selectedSessionId || saving || deletingRecordId !== null || loadingRecordId !== null) return;
         setLoadingRecordId(recordId);
         setError(null);
         setSuccess(null);
@@ -113,6 +117,27 @@ export function AnalysisPersistencePanel({
             setError(cause instanceof Error ? cause.message : 'Could not retrieve this analysis.');
         } finally {
             setLoadingRecordId(null);
+        }
+    };
+
+    const handleDelete = async (record: AnalysisRecordSummary) => {
+        if (!selectedSessionId || saving || deletingRecordId !== null || loadingRecordId !== null) return;
+        const confirmed = window.confirm(
+            `Delete this saved ${title.toLowerCase()} record? This cannot be undone. The original image or CSV, if any, remains local and is not stored in the record.`,
+        );
+        if (!confirmed) return;
+
+        setDeletingRecordId(record.id);
+        setError(null);
+        setSuccess(null);
+        try {
+            await deleteAnalysisRecord(selectedSessionId, kind, record.id);
+            const refreshed = await refreshRecords(selectedSessionId);
+            if (refreshed) setSuccess(`Deleted saved ${title.toLowerCase()} record.`);
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Could not delete this analysis record.');
+        } finally {
+            setDeletingRecordId(null);
         }
     };
 
@@ -130,14 +155,14 @@ export function AnalysisPersistencePanel({
                     <select
                         className="field-input"
                         value={selectedSessionId}
-                        disabled={loadingSessions || sessions.length === 0}
+                        disabled={loadingSessions || sessions.length === 0 || saving || deletingRecordId !== null}
                         onChange={(event) => { setSelectedSessionId(event.target.value); setSuccess(null); }}
                     >
                         <option value="">{loadingSessions ? 'Loading sessions…' : sessions.length ? 'Choose a session' : 'No saved sessions'}</option>
                         {sessions.map((session) => <option key={session.id} value={session.id}>{session.name}</option>)}
                     </select>
                 </label>
-                <Button variant="primary" onClick={() => void handleSave()} disabled={!selectedSessionId || !canSave || saving}>
+                <Button variant="primary" onClick={() => void handleSave()} disabled={!selectedSessionId || !canSave || saving || deletingRecordId !== null}>
                     {saving ? 'Saving…' : 'Save analysis'}
                 </Button>
             </div>
@@ -164,9 +189,14 @@ export function AnalysisPersistencePanel({
                                     <span className="block truncate text-[12.5px] text-white">{formatDate(record.createdAt)}</span>
                                     <span className="mono text-[10.5px] text-txt-muted">Method {record.methodVersion}</span>
                                 </span>
-                                <Button size="sm" onClick={() => void handleLoad(record.id)} disabled={loadingRecordId !== null}>
-                                    {loadingRecordId === record.id ? 'Loading…' : 'Load'}
-                                </Button>
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button size="sm" onClick={() => void handleLoad(record.id)} disabled={loadingRecordId !== null || deletingRecordId !== null || saving}>
+                                            {loadingRecordId === record.id ? 'Loading…' : 'Load'}
+                                        </Button>
+                                        <Button size="sm" variant="danger" onClick={() => void handleDelete(record)} disabled={loadingRecordId !== null || deletingRecordId !== null || saving}>
+                                            {deletingRecordId === record.id ? 'Deleting…' : 'Delete'}
+                                        </Button>
+                                    </div>
                             </li>
                         ))}
                     </ul>

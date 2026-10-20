@@ -1,4 +1,4 @@
-import { resolveApiBaseUrl } from '../config/api';
+import { buildApiUrl } from '../config/api.ts';
 
 export interface ResearchSession {
     id: string;
@@ -11,6 +11,12 @@ export interface ResearchSession {
 
 export interface CreateResearchSession {
     name: string;
+    device?: string | null;
+    notes?: string | null;
+}
+
+export interface UpdateResearchSession {
+    name?: string;
     device?: string | null;
     notes?: string | null;
 }
@@ -103,8 +109,6 @@ export interface KineticPayload {
 
 export interface KineticAnalysisRecord extends AnalysisRecordBase, KineticPayload {}
 
-const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
-
 function formatApiError(detail: unknown): string | null {
     if (typeof detail === 'string') return detail;
     if (Array.isArray(detail)) {
@@ -120,82 +124,108 @@ function formatApiError(detail: unknown): string | null {
     return null;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    let response: Response;
-    try {
-        response = await fetch(`${API_BASE_URL}${path}`, {
-            ...init,
-            headers: {
-                'Content-Type': 'application/json',
-                ...init?.headers,
-            },
-        });
-    } catch {
-        throw new Error(
-            'Could not reach the session service. Check that the backend is available and VITE_API_BASE_URL is correct. Local image analysis and CSV export remain available.',
-        );
-    }
-
-    if (!response.ok) {
-        let detail: unknown;
+export function createSessionApi(fetcher: typeof fetch, configuredApiBaseUrl?: string) {
+    async function request<T>(path: string, init?: RequestInit): Promise<T> {
+        const requestUrl = buildApiUrl(path, configuredApiBaseUrl);
+        let response: Response;
         try {
-            detail = (await response.json())?.detail;
+            response = await fetcher(requestUrl, {
+                ...init,
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...init?.headers,
+                },
+            });
         } catch {
-            // Use the status-based fallback below when the response has no JSON body.
+            throw new Error(
+                `Could not reach ${requestUrl}. The browser could not complete the request; check backend availability and whether CORS allows this page's origin. Local image analysis and CSV export remain available.`,
+            );
         }
-        throw new Error(
-            formatApiError(detail) ?? `Session service returned HTTP ${response.status}.`,
-        );
+
+        if (!response.ok) {
+            let detail: unknown;
+            try {
+                detail = (await response.json())?.detail;
+            } catch {
+                // Use the status-based fallback below when the response has no JSON body.
+            }
+            const detailMessage = formatApiError(detail);
+            if (response.status >= 500) {
+                throw new Error(
+                    `Session service returned HTTP ${response.status}${detailMessage ? `: ${detailMessage}` : ''}. Check backend logs for database or server errors.`,
+                );
+            }
+            throw new Error(detailMessage ?? `Session service returned HTTP ${response.status}.`);
+        }
+
+        if (response.status === 204) return undefined as T;
+        return (await response.json()) as T;
     }
 
-    return (await response.json()) as T;
+    return {
+        listResearchSessions(limit = 50, offset = 0): Promise<ResearchSessionList> {
+            const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+            return request<ResearchSessionList>(`/sessions?${query.toString()}`);
+        },
+        createResearchSession(payload: CreateResearchSession): Promise<ResearchSession> {
+            return request<ResearchSession>('/sessions', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+        },
+        getResearchSession(id: string): Promise<ResearchSession> {
+            return request<ResearchSession>(`/sessions/${encodeURIComponent(id)}`);
+        },
+        updateResearchSession(id: string, payload: UpdateResearchSession): Promise<ResearchSession> {
+            return request<ResearchSession>(`/sessions/${encodeURIComponent(id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify(payload),
+            });
+        },
+        deleteResearchSession(id: string): Promise<void> {
+            return request<void>(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        },
+        listAnalysisRecords(sessionId: string, kind: AnalysisKind): Promise<AnalysisRecordList> {
+            return request<AnalysisRecordList>(`/sessions/${encodeURIComponent(sessionId)}/${kind}`);
+        },
+        saveAnalysisRecord<TPayload, TRecord extends AnalysisRecordBase>(
+            sessionId: string,
+            kind: AnalysisKind,
+            payload: TPayload,
+        ): Promise<TRecord> {
+            return request<TRecord>(`/sessions/${encodeURIComponent(sessionId)}/${kind}`, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+        },
+        getAnalysisRecord<TRecord extends AnalysisRecordBase>(
+            sessionId: string,
+            kind: AnalysisKind,
+            recordId: string,
+        ): Promise<TRecord> {
+            return request<TRecord>(
+                `/sessions/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(recordId)}`,
+            );
+        },
+        deleteAnalysisRecord(sessionId: string, kind: AnalysisKind, recordId: string): Promise<void> {
+            return request<void>(
+                `/sessions/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(recordId)}`,
+                { method: 'DELETE' },
+            );
+        },
+    };
 }
 
-export function listResearchSessions(
-    limit = 50,
-    offset = 0,
-): Promise<ResearchSessionList> {
-    const query = new URLSearchParams({ limit: String(limit), offset: String(offset) });
-    return request<ResearchSessionList>(`/sessions?${query.toString()}`);
-}
+const sessionApi = createSessionApi(fetch, import.meta.env?.VITE_API_BASE_URL);
 
-export function createResearchSession(
-    payload: CreateResearchSession,
-): Promise<ResearchSession> {
-    return request<ResearchSession>('/sessions', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-    });
-}
-
-export function getResearchSession(id: string): Promise<ResearchSession> {
-    return request<ResearchSession>(`/sessions/${encodeURIComponent(id)}`);
-}
-
-export function listAnalysisRecords(
-    sessionId: string,
-    kind: AnalysisKind,
-): Promise<AnalysisRecordList> {
-    return request<AnalysisRecordList>(`/sessions/${encodeURIComponent(sessionId)}/${kind}`);
-}
-
-export function saveAnalysisRecord<TPayload, TRecord extends AnalysisRecordBase>(
-    sessionId: string,
-    kind: AnalysisKind,
-    payload: TPayload,
-): Promise<TRecord> {
-    return request<TRecord>(`/sessions/${encodeURIComponent(sessionId)}/${kind}`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-    });
-}
-
-export function getAnalysisRecord<TRecord extends AnalysisRecordBase>(
-    sessionId: string,
-    kind: AnalysisKind,
-    recordId: string,
-): Promise<TRecord> {
-    return request<TRecord>(
-        `/sessions/${encodeURIComponent(sessionId)}/${kind}/${encodeURIComponent(recordId)}`,
-    );
-}
+export const {
+    listResearchSessions,
+    createResearchSession,
+    getResearchSession,
+    updateResearchSession,
+    deleteResearchSession,
+    listAnalysisRecords,
+    saveAnalysisRecord,
+    getAnalysisRecord,
+    deleteAnalysisRecord,
+} = sessionApi;

@@ -7,8 +7,10 @@ import { PageHeader } from '../components/PageHeader';
 import { TextAreaField, TextField } from '../components/FormControls';
 import {
     createResearchSession,
+    deleteResearchSession,
     getResearchSession,
     listResearchSessions,
+    updateResearchSession,
     type ResearchSession,
 } from '../services/sessions';
 
@@ -26,6 +28,8 @@ export function SessionsPage() {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [loadingId, setLoadingId] = useState<string | null>(null);
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [deletingId, setDeletingId] = useState<string | null>(null);
     const [selected, setSelected] = useState<ResearchSession | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
@@ -48,28 +52,52 @@ export function SessionsPage() {
         void refreshSessions();
     }, []);
 
+    const clearForm = () => {
+        setName('');
+        setDevice('');
+        setNotes('');
+        setEditingId(null);
+    };
+
+    const handleEdit = (record: ResearchSession) => {
+        setEditingId(record.id);
+        setName(record.name);
+        setDevice(record.device ?? '');
+        setNotes(record.notes ?? '');
+        setError(null);
+        setSuccess(null);
+    };
+
     const handleSave = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (!name.trim()) {
             setError('Enter a session name before saving.');
             return;
         }
+        if (saving || deletingId !== null) return;
         setSaving(true);
         setError(null);
         setSuccess(null);
         try {
-            const record = await createResearchSession({
+            const payload = {
                 name: name.trim(),
                 device: device.trim() || null,
                 notes: notes.trim() || null,
-            });
-            setSessions((current) => [record, ...current].slice(0, 50));
-            setTotal((current) => current + 1);
-            setName('');
-            setDevice('');
-            setNotes('');
-            setSelected(record);
-            setSuccess(`Saved “${record.name}”.`);
+            };
+            if (editingId) {
+                const record = await updateResearchSession(editingId, payload);
+                setSessions((current) => current.map((item) => item.id === record.id ? record : item));
+                setSelected((current) => current?.id === record.id ? record : current);
+                clearForm();
+                setSuccess(`Updated “${record.name}”.`);
+            } else {
+                const record = await createResearchSession(payload);
+                setSessions((current) => [record, ...current].slice(0, 50));
+                setTotal((current) => current + 1);
+                clearForm();
+                setSelected(record);
+                setSuccess(`Saved “${record.name}”.`);
+            }
         } catch (cause) {
             setError(cause instanceof Error ? cause.message : 'Could not save the session.');
         } finally {
@@ -78,6 +106,7 @@ export function SessionsPage() {
     };
 
     const handleLoad = async (id: string) => {
+        if (saving || deletingId !== null || loadingId !== null) return;
         setLoadingId(id);
         setError(null);
         setSuccess(null);
@@ -89,6 +118,31 @@ export function SessionsPage() {
             setError(cause instanceof Error ? cause.message : 'Could not load the session.');
         } finally {
             setLoadingId(null);
+        }
+    };
+
+    const handleDelete = async (record: ResearchSession) => {
+        if (saving || deletingId !== null || loadingId !== null) return;
+        const confirmed = window.confirm(
+            `Delete “${record.name}” and all of its saved analysis records? This cannot be undone. Original images and CSV files are not stored by the service.`,
+        );
+        if (!confirmed) return;
+
+        setDeletingId(record.id);
+        setError(null);
+        setSuccess(null);
+        try {
+            await deleteResearchSession(record.id);
+            setSessions((current) => current.filter((item) => item.id !== record.id));
+            setTotal((current) => Math.max(0, current - 1));
+            setSelected((current) => current?.id === record.id ? null : current);
+            if (editingId === record.id) clearForm();
+            setSuccess(`Deleted “${record.name}” and its saved analysis records.`);
+            await refreshSessions();
+        } catch (cause) {
+            setError(cause instanceof Error ? cause.message : 'Could not delete the session.');
+        } finally {
+            setDeletingId(null);
         }
     };
 
@@ -111,7 +165,7 @@ export function SessionsPage() {
             ) : null}
 
             <div className="grid gap-5 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-                <GlassCard glow title="Save a research session">
+                <GlassCard glow title={editingId ? 'Edit research session' : 'Save a research session'}>
                     <p className="mb-4 text-[13px] leading-relaxed text-txt-muted">
                         Saving is explicit. Only the name, optional device description and notes are sent to the local backend; no images, ROI measurements, calibration values or kinetic results are uploaded.
                     </p>
@@ -142,9 +196,16 @@ export function SessionsPage() {
                             maxLength={2000}
                         />
                         <div>
-                            <Button type="submit" variant="primary" disabled={saving}>
-                                {saving ? 'Saving…' : 'Save session'}
-                            </Button>
+                            <div className="flex flex-wrap gap-2">
+                                <Button type="submit" variant="primary" disabled={saving || deletingId !== null}>
+                                    {saving ? (editingId ? 'Updating…' : 'Saving…') : (editingId ? 'Save changes' : 'Save session')}
+                                </Button>
+                                {editingId ? (
+                                    <Button onClick={clearForm} disabled={saving || deletingId !== null}>
+                                        Cancel edit
+                                    </Button>
+                                ) : null}
+                            </div>
                         </div>
                     </form>
                 </GlassCard>
@@ -180,9 +241,17 @@ export function SessionsPage() {
                                             {record.device || 'No device specified'} · {formatTimestamp(record.createdAt)}
                                         </p>
                                     </div>
-                                    <Button size="sm" onClick={() => void handleLoad(record.id)} disabled={loadingId !== null}>
-                                        {loadingId === record.id ? 'Loading…' : 'Load'}
-                                    </Button>
+                                    <div className="flex flex-wrap gap-2">
+                                        <Button size="sm" onClick={() => void handleLoad(record.id)} disabled={loadingId !== null || saving || deletingId !== null}>
+                                            {loadingId === record.id ? 'Loading…' : 'Load'}
+                                        </Button>
+                                        <Button size="sm" onClick={() => handleEdit(record)} disabled={loadingId !== null || saving || deletingId !== null}>
+                                            Edit
+                                        </Button>
+                                        <Button size="sm" variant="danger" onClick={() => void handleDelete(record)} disabled={loadingId !== null || saving || deletingId !== null}>
+                                            {deletingId === record.id ? 'Deleting…' : 'Delete'}
+                                        </Button>
+                                    </div>
                                 </div>
                             ))}
                         </div>

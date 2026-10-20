@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlmodel import Session, desc, select
 
 from .database import create_database_engine, get_session
@@ -25,7 +25,9 @@ from .schemas import (
     SessionCreate,
     SessionList,
     SessionRead,
+    SessionUpdate,
 )
+from .models import utc_now
 
 
 def create_app(database_url: str | None = None) -> CORSMiddleware:
@@ -89,6 +91,61 @@ def create_app(database_url: str | None = None) -> CORSMiddleware:
                 detail="Research session not found.",
             )
         return record
+
+    @application.patch(
+        "/api/v1/sessions/{session_id}",
+        response_model=SessionRead,
+    )
+    def update_session(
+        session_id: UUID,
+        payload: SessionUpdate,
+        session: Session = Depends(get_session),
+    ) -> ResearchSession:
+        record = session.get(ResearchSession, session_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Research session not found.")
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            setattr(record, field, value)
+        record.updated_at = utc_now()
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+    @application.delete(
+        "/api/v1/sessions/{session_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_session(
+        session_id: UUID,
+        session: Session = Depends(get_session),
+    ) -> Response:
+        record = session.get(ResearchSession, session_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Research session not found.")
+        # The existing SQLite and PostgreSQL foreign keys do not cascade. Delete
+        # this session's children explicitly in the same transaction.
+        session.exec(delete(ImageAnalysisRecord).where(ImageAnalysisRecord.session_id == session_id))
+        session.exec(delete(CalibrationRecord).where(CalibrationRecord.session_id == session_id))
+        session.exec(delete(KineticAnalysisRecord).where(KineticAnalysisRecord.session_id == session_id))
+        session.delete(record)
+        session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    def delete_analysis_record(
+        session_id: UUID,
+        record_id: UUID,
+        record_type,
+        record_name: str,
+        session: Session,
+    ) -> Response:
+        require_session(session_id, session)
+        record = session.get(record_type, record_id)
+        if record is None or record.session_id != session_id:
+            raise HTTPException(status_code=404, detail=f"{record_name} not found.")
+        session.delete(record)
+        session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     def require_session(session_id: UUID, session: Session) -> ResearchSession:
         record = session.get(ResearchSession, session_id)
@@ -162,6 +219,17 @@ def create_app(database_url: str | None = None) -> CORSMiddleware:
             raise HTTPException(status_code=404, detail="Image analysis record not found.")
         return record
 
+    @application.delete(
+        "/api/v1/sessions/{session_id}/image-analyses/{record_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_image_analysis(
+        session_id: UUID,
+        record_id: UUID,
+        session: Session = Depends(get_session),
+    ) -> Response:
+        return delete_analysis_record(session_id, record_id, ImageAnalysisRecord, "Image analysis record", session)
+
     @application.post(
         "/api/v1/sessions/{session_id}/calibrations",
         response_model=CalibrationRead,
@@ -229,6 +297,17 @@ def create_app(database_url: str | None = None) -> CORSMiddleware:
         if record is None or record.session_id != session_id:
             raise HTTPException(status_code=404, detail="Calibration record not found.")
         return record
+
+    @application.delete(
+        "/api/v1/sessions/{session_id}/calibrations/{record_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_calibration(
+        session_id: UUID,
+        record_id: UUID,
+        session: Session = Depends(get_session),
+    ) -> Response:
+        return delete_analysis_record(session_id, record_id, CalibrationRecord, "Calibration record", session)
 
     @application.post(
         "/api/v1/sessions/{session_id}/kinetic-analyses",
@@ -299,13 +378,26 @@ def create_app(database_url: str | None = None) -> CORSMiddleware:
             raise HTTPException(status_code=404, detail="Kinetic analysis record not found.")
         return record
 
+    @application.delete(
+        "/api/v1/sessions/{session_id}/kinetic-analyses/{record_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_kinetic_analysis(
+        session_id: UUID,
+        record_id: UUID,
+        session: Session = Depends(get_session),
+    ) -> Response:
+        return delete_analysis_record(session_id, record_id, KineticAnalysisRecord, "Kinetic analysis record", session)
+
     # Wrap the complete FastAPI app so CORS headers are also applied to
     # framework-generated error responses (including unhandled 500s).
     cors_application = CORSMiddleware(
         app=application,
         allow_origins=[
             "http://localhost:5173",
+            "http://localhost:5174",
             "http://127.0.0.1:5173",
+            "http://127.0.0.1:5174",
             "https://uni-ast-five.vercel.app",
         ],
         allow_credentials=False,

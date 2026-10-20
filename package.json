@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
-    "test": "node --test tests/apiBaseUrl.test.ts tests/calibration.test.ts tests/calibrationBenchmark.test.ts tests/kinetics.test.ts tests/roi.test.ts"
+    "test": "node --test tests/apiBaseUrl.test.ts tests/calibration.test.ts tests/calibrationBenchmark.test.ts tests/kineticChart.test.ts tests/kinetics.test.ts tests/roi.test.ts tests/sessionApi.test.ts"
   },
   "dependencies": {
     "motion": "^14.4.0",

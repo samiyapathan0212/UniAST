@@ -384,3 +384,62 @@ async def test_analysis_records_survive_new_database_sessions(client):
     retrieved = await client.get(f"/api/v1/sessions/{session_id}/kinetic-analyses/{record_id}")
     assert retrieved.status_code == 200
     assert retrieved.json()["observations"] == payload["observations"]
+
+
+@pytest.mark.anyio
+async def test_analysis_records_can_only_be_deleted_through_their_owning_session(client):
+    owner_id = await create_session(client, "Delete test owner")
+    unrelated_id = await create_session(client, "Unrelated session")
+    records = [
+        ("image-analyses", image_analysis_payload()),
+        ("calibrations", calibration_payload()),
+        ("kinetic-analyses", kinetic_payload()),
+    ]
+    created_records = []
+    for route, payload in records:
+        created = await client.post(f"/api/v1/sessions/{owner_id}/{route}", json=payload)
+        assert created.status_code == 201, created.text
+        created_records.append((route, created.json()["id"]))
+
+    for route, record_id in created_records:
+        wrong_owner = await client.delete(
+            f"/api/v1/sessions/{unrelated_id}/{route}/{record_id}"
+        )
+        assert wrong_owner.status_code == 404
+        assert (await client.get(
+            f"/api/v1/sessions/{owner_id}/{route}/{record_id}"
+        )).status_code == 200
+
+        deleted = await client.delete(
+            f"/api/v1/sessions/{owner_id}/{route}/{record_id}"
+        )
+        assert deleted.status_code == 204
+        assert deleted.content == b""
+        assert (await client.get(
+            f"/api/v1/sessions/{owner_id}/{route}/{record_id}"
+        )).status_code == 404
+
+    assert (await client.get(f"/api/v1/sessions/{owner_id}")).status_code == 200
+    assert (await client.get(f"/api/v1/sessions/{unrelated_id}")).status_code == 200
+
+
+@pytest.mark.anyio
+async def test_delete_session_cleans_linked_records_without_affecting_other_session(client):
+    owner_id = await create_session(client, "Session with children")
+    unrelated_id = await create_session(client, "Session to preserve")
+    for route, payload in (
+        ("image-analyses", image_analysis_payload()),
+        ("calibrations", calibration_payload()),
+        ("kinetic-analyses", kinetic_payload()),
+    ):
+        created = await client.post(f"/api/v1/sessions/{owner_id}/{route}", json=payload)
+        assert created.status_code == 201, created.text
+
+    deleted = await client.delete(f"/api/v1/sessions/{owner_id}")
+    assert deleted.status_code == 204
+    assert (await client.get(f"/api/v1/sessions/{owner_id}")).status_code == 404
+    assert (await client.get(f"/api/v1/sessions/{unrelated_id}")).status_code == 200
+    for route in ("image-analyses", "calibrations", "kinetic-analyses"):
+        response = await client.get(f"/api/v1/sessions/{unrelated_id}/{route}")
+        assert response.status_code == 200
+        assert response.json()["items"] == []

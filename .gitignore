@@ -1,0 +1,25 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+
+# Local UniAST backend environment and data
+backend/.venv/
+backend/data/
+backend/.env
+backend/**/__pycache__/
+backend/.pytest_cache/
+*.sqlite3
+*.db
+
+# Local secrets, Python caches, test/build logs, and compiler scratch output
+.env
+.env.*
+!.env.example
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.log
+tsc_out.txt
+tsc_files.txt

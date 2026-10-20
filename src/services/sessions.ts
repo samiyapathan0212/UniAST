@@ -1,3 +1,5 @@
+import { resolveApiBaseUrl } from '../config/api';
+
 export interface ResearchSession {
     id: string;
     name: string;
@@ -101,9 +103,7 @@ export interface KineticPayload {
 
 export interface KineticAnalysisRecord extends AnalysisRecordBase, KineticPayload {}
 
-const API_BASE_URL = (
-    import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000/api/v1'
-).replace(/\/$/, '');
+const API_BASE_URL = resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 
 function formatApiError(detail: unknown): string | null {
     if (typeof detail === 'string') return detail;
@@ -132,7 +132,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         });
     } catch {
         throw new Error(
-            'Could not reach the local session service. Start the backend to save or load sessions; local image analysis and CSV export remain available.',
+            'Could not reach the session service. Check that the backend is available and VITE_API_BASE_URL is correct. Local image analysis and CSV export remain available.',
         );
     }
 

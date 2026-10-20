@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from fastapi import Request
 from sqlalchemy import event
@@ -11,8 +12,18 @@ DEFAULT_DATABASE_PATH = BACKEND_DIR / "data" / "uniast.sqlite3"
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
 
 
+def get_database_url(database_url: str | None = None) -> str:
+    """Use the same explicit URL for the API and Alembic when configured."""
+    url = database_url or os.environ.get("UNIAST_DATABASE_URL") or DEFAULT_DATABASE_URL
+    # Some hosting dashboards still expose the legacy postgres:// scheme.
+    # SQLAlchemy's PostgreSQL dialect uses postgresql://.
+    if url.startswith("postgres://"):
+        return "postgresql://" + url.removeprefix("postgres://")
+    return url
+
+
 def create_database_engine(database_url: str | None = None) -> Engine:
-    url = database_url or DEFAULT_DATABASE_URL
+    url = get_database_url(database_url)
     if url.startswith("sqlite:///") and ":memory:" not in url:
         sqlite_path = Path(url.removeprefix("sqlite:///"))
         sqlite_path.parent.mkdir(parents=True, exist_ok=True)

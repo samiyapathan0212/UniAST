@@ -62,7 +62,23 @@ Get-FileHash backend\data\uniast.sqlite3, $backupPath
 .\backend\.venv\Scripts\python.exe -m alembic -c backend\alembic.ini upgrade head
 ```
 
-The `stamp` command must only be used when the database schema has been confirmed to match the baseline. For migration commands targeting a database copy, set `UNIAST_DATABASE_URL`, for example `$env:UNIAST_DATABASE_URL = 'sqlite:///C:/path/to/copy.sqlite3'`. This variable is read by Alembic only; the FastAPI app itself uses `backend/data/uniast.sqlite3`. `VITE_API_BASE_URL` is the only frontend environment variable and changes the API base URL; no `.env` file is required for the default local setup.
+The `stamp` command must only be used when the database schema has been confirmed to match the baseline. `UNIAST_DATABASE_URL` overrides the database URL for both Alembic and the FastAPI app, so migrations and API requests use the same database. SQLite remains the default; PostgreSQL URLs use the included `psycopg2-binary` driver. For migration commands targeting a database copy, set `$env:UNIAST_DATABASE_URL = 'sqlite:///C:/path/to/copy.sqlite3'`. If unset, both use `backend/data/uniast.sqlite3`. `VITE_API_BASE_URL` changes the frontend API base URL; no `.env` file is required for the default local setup.
+
+### Render deployment
+
+The Render service must apply migrations before starting Uvicorn. Use this build command:
+
+```sh
+python -m pip install -r backend/requirements.txt
+```
+
+Use this start command (it preserves the current Uvicorn module, app directory, host, and Render-provided port):
+
+```sh
+python -m alembic -c backend/alembic.ini upgrade head && python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port $PORT
+```
+
+For Neon, add `UNIAST_DATABASE_URL` in the Render service's environment settings and paste the provider's PostgreSQL connection string there (normally `postgresql://...`). Keep the value out of source files, logs, and commits; enable the provider-required TLS option, commonly `sslmode=require`. The included PostgreSQL driver is `psycopg2-binary`. Both Alembic and FastAPI use the same environment variable. For SQLite instead, set it to a file on a mounted persistent Render disk, for example `sqlite:////var/data/uniast.sqlite3` when the mount path is `/var/data`; without a persistent disk, SQLite data may be lost when the instance is replaced. The baseline migration runs non-destructively via `upgrade head`; do not stamp or reset a deployed database as a workaround for a missing-table error. This repository change does not itself deploy or verify the live service.
 
 Start the frontend in a second PowerShell window:
 

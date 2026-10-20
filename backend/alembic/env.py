@@ -15,17 +15,18 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from backend.app import models  # noqa: E402,F401
-from backend.app.database import create_database_engine, DEFAULT_DATABASE_URL  # noqa: E402
+from backend.app.database import create_database_engine, get_database_url, DEFAULT_DATABASE_URL  # noqa: E402
 from sqlmodel import SQLModel  # noqa: E402
 
 target_metadata = SQLModel.metadata
 
 # Allows tests and backup-copy procedures to target an explicit SQLite file.
-database_url = (
+configured_database_url = (
     os.environ.get("UNIAST_DATABASE_URL")
     or config.get_main_option("sqlalchemy.url")
     or DEFAULT_DATABASE_URL
 )
+database_url = get_database_url(configured_database_url)
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 

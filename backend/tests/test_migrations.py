@@ -1,12 +1,16 @@
 import shutil
+from io import StringIO
 from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from httpx import ASGITransport, AsyncClient
+import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, SQLModel
 
 from backend.app.database import create_database_engine
+from backend.app.main import create_app
 from backend.app.models import ResearchSession
 
 
@@ -55,6 +59,48 @@ def test_alembic_upgrade_builds_fresh_database(tmp_path):
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == REVISION
     finally:
         engine.dispose()
+
+
+def test_postgresql_baseline_generates_complete_schema_without_connection(monkeypatch):
+    database_url = "postgresql://uniast:placeholder@localhost/uniast_test?sslmode=require"
+    monkeypatch.setenv("UNIAST_DATABASE_URL", database_url)
+    output = StringIO()
+    config = Config(str(BACKEND_DIR / "alembic.ini"), output_buffer=output)
+    command.upgrade(config, "head", sql=True)
+
+    generated_sql = output.getvalue().lower()
+    for table_name in EXPECTED_TABLES:
+        assert f"create table {table_name}" in generated_sql
+    assert generated_sql.count("references research_sessions (id)") == 3
+    assert "create index ix_research_sessions_created_at" in generated_sql
+    assert "create index ix_image_analysis_records_session_id" in generated_sql
+
+
+@pytest.mark.anyio
+async def test_environment_database_url_is_migrated_before_session_list(tmp_path, monkeypatch):
+    database_path = tmp_path / "render-style-fresh.sqlite3"
+    database_url = f"sqlite:///{database_path.as_posix()}"
+    monkeypatch.setenv("UNIAST_DATABASE_URL", database_url)
+
+    # Mirrors the deployment migration command: Alembic and the app both use
+    # UNIAST_DATABASE_URL without relying on an alembic.ini URL override.
+    command.upgrade(Config(str(BACKEND_DIR / "alembic.ini")), "head")
+    application = create_app()
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=application), base_url="http://testserver"
+        ) as client:
+            response = await client.get("/api/v1/sessions")
+        assert response.status_code == 200
+        assert response.json() == {
+            "items": [],
+            "limit": 50,
+            "offset": 0,
+            "total": 0,
+        }
+        assert_schema(database_path)
+    finally:
+        application.state.engine.dispose()
 
 
 def test_existing_unversioned_schema_can_be_stamped_and_upgraded_on_a_copy(tmp_path):
